@@ -10,9 +10,9 @@ local Camera          = Workspace.CurrentCamera
 local LocalPlayer     = Players.LocalPlayer
 local PlayerGui       = LocalPlayer:WaitForChild("PlayerGui")
 
--- Global cleanup check (ensuring a single instance)
+-- Global cleanup check
 if _G.KillAuraCleanup then
-    _G.KillAuraCleanup()
+    pcall(_G.KillAuraCleanup)
 end
 local existingGUI = PlayerGui:FindFirstChild("KillAuraGUI")
 if existingGUI then
@@ -21,20 +21,20 @@ end
 
 -- Config and State
 local Config = {
-    MAX_RANGE         = 20,    -- Range for target detection
-    COOLDOWN          = 0.2,   -- Time between attacks
+    MAX_RANGE         = 20,
+    COOLDOWN          = 0.2,
     DEBUG_MODE        = false,
     TargetingMode     = "distance", -- "distance" or "health"
 }
 local ESPConfig = {
-    Enabled     = false,       -- Toggle for ESP
-    MaxDistance = 500,         -- Default max distance for ESP
+    Enabled     = false,
+    MaxDistance = 500,
 }
 local FlyConfig = {
     Enabled  = false,
-    Speed    = 1,             -- Начальная скорость
-    MinSpeed = 1,             -- Минимальная скорость
-    MaxSpeed = 10,            -- Максимальная скорость
+    Speed    = 1,
+    MinSpeed = 1,
+    MaxSpeed = 10,
 }
 
 local State = {
@@ -53,22 +53,19 @@ local FlyState = {
 }
 
 local DamageEvent = ReplicatedStorage:WaitForChild("GameContents"):WaitForChild("Remotes"):WaitForChild("DamageEvent")
-local Connections = {}  -- Holds all event connections
+local Connections = {}
 
--- Cleanup Function
 _G.KillAuraCleanup = function()
     for _, conn in ipairs(Connections) do
         if conn then conn:Disconnect() end
     end
-    if FlyState.RenderConnection then
-        FlyState.RenderConnection:Disconnect()
-    end
+    if FlyState.RenderConnection then FlyState.RenderConnection:Disconnect() end
     if FlyState.BodyGyro then FlyState.BodyGyro:Destroy() end
     if FlyState.BodyVelocity then FlyState.BodyVelocity:Destroy() end
 end
 
 ------------------------------------------
--- Target Acquisition & Damage Processing
+-- Target Acquisition & Damage
 ------------------------------------------
 local function getSortedTargets()
     local targets = {}
@@ -120,16 +117,13 @@ local function processDamage()
     end
 end
 
--- Update the currently equipped weapon
 local function updateWeapon(character)
     local tool = character:FindFirstChildOfClass("Tool")
     State.Weapon = tool and tool.Name or "Unarmed"
 end
 
--- Character handling
 local function onCharacterAdded(character)
     State.HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    
     character.ChildAdded:Connect(function(child)
         if child:IsA("Tool") then updateWeapon(character) end
     end)
@@ -146,21 +140,20 @@ table.insert(Connections, LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
 table.insert(Connections, RunService.Heartbeat:Connect(processDamage))
 
 ------------------------------------------
--- FLY LOGIC (Mobile & PC Compatible)
+-- Fly Functionality
 ------------------------------------------
 local function toggleFly(enable)
     FlyConfig.Enabled = enable
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
 
     if not hum or not root then return end
 
     if enable then
         FlyState.Flying = true
 
-        -- Disable default physics states
         hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.Flying, false)
@@ -178,7 +171,6 @@ local function toggleFly(enable)
 
         hum.PlatformStand = true
 
-        -- Setup BodyGyro and BodyVelocity
         FlyState.BodyGyro = Instance.new("BodyGyro")
         FlyState.BodyGyro.P = 9e4
         FlyState.BodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
@@ -194,12 +186,11 @@ local function toggleFly(enable)
             if not FlyState.Flying or not root or not hum then return end
             
             local moveDir = hum.MoveDirection
-            local baseSpeed = 50 * FlyConfig.Speed
+            local baseSpeed = 40 * FlyConfig.Speed
             
             FlyState.BodyGyro.cframe = Camera.CFrame
             
             if moveDir.Magnitude > 0 then
-                -- Direct motion based on camera view angle
                 FlyState.BodyVelocity.velocity = Camera.CFrame:VectorToWorldSpace(
                     CFrame.new(Vector3.zero, Camera.CFrame.LookVector):VectorToWorldSpace(moveDir)
                 ) * baseSpeed
@@ -232,15 +223,13 @@ local function toggleFly(enable)
 end
 
 --------------------------------------------------------------------------------
--- BOUNDING BOX ESP (2D lines + text + HP bar)
+-- ESP SYSTEM
 --------------------------------------------------------------------------------
 local MobESPBoxes = {}
 
 local function worldToViewport(pos)
     local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
-    if onScreen then
-        return Vector2.new(screenPos.X, screenPos.Y)
-    end
+    if onScreen then return Vector2.new(screenPos.X, screenPos.Y) end
     return nil
 end
 
@@ -302,9 +291,7 @@ end
 local function removeBox(mob)
     local boxData = MobESPBoxes[mob]
     if boxData then
-        for _, obj in pairs(boxData) do
-            obj:Remove()
-        end
+        for _, obj in pairs(boxData) do obj:Remove() end
         MobESPBoxes[mob] = nil
     end
 end
@@ -394,9 +381,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
             local hrp = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Head") or mob:FindFirstChild("Torso")
             if hrp then
                 local dist = (playerPos - hrp.Position).Magnitude
-                if dist <= ESPConfig.MaxDistance then
-                    validMobs[mob] = dist
-                end
+                if dist <= ESPConfig.MaxDistance then validMobs[mob] = dist end
             end
         end
     end
@@ -408,7 +393,7 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
 end))
 
 ---------------------
--- UI Creation
+-- UI CREATION
 ---------------------
 local UI = {}
 
@@ -452,9 +437,9 @@ function UI.createMainGUI()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 220, 0, 210)
-    mainFrame.Position = UDim2.new(0.4, 0, 0.3, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    mainFrame.Size = UDim2.new(0, 240, 0, 270)
+    mainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
@@ -522,10 +507,6 @@ function UI.createMainGUI()
         button.Text = "OFF"
         button.Parent = rowFrame
 
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 4)
-        btnCorner.Parent = button
-
         button.MouseButton1Click:Connect(function()
             local isNowOn = toggleCallback()
             if isNowOn then
@@ -538,23 +519,46 @@ function UI.createMainGUI()
         end)
     end
 
-    -- Слайдер скорости Fly (совместимый с ПК и Сенсорным экраном)
-    local function createSliderRow(name, labelText, order, minVal, maxVal, defaultVal, callback)
-        local sliderFrame = Instance.new("Frame")
-        sliderFrame.Name = name
-        sliderFrame.Size = UDim2.new(1, 0, 0, 35)
-        sliderFrame.BackgroundTransparency = 1
-        sliderFrame.LayoutOrder = order
-        sliderFrame.Parent = mainFrame
+    local function createCycleRow(name, labelText, order, options, cycleCallback)
+        local rowFrame = Instance.new("Frame")
+        rowFrame.Name = name
+        rowFrame.Size = UDim2.new(1, 0, 0, 25)
+        rowFrame.BackgroundTransparency = 1
+        rowFrame.LayoutOrder = order
+        rowFrame.Parent = mainFrame
 
         local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, 0, 0, 15)
+        label.Name = name.."Label"
+        label.Size = UDim2.new(1, -70, 1, 0)
         label.BackgroundTransparency = 1
-        label.Text = string.format("%s: %d", labelText, defaultVal)
+        label.Text = labelText .. ": " .. options[1]
         label.TextColor3 = Color3.new(1, 1, 1)
         label.Font = Enum.Font.Gotham
-        label.TextSize = 12
+        label.TextSize = 14
         label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Parent = sliderFrame
+        label.Parent = rowFrame
 
-        local barBack
+        local button = Instance.new("TextButton")
+        button.Name = name.."Button"
+        button.Size = UDim2.new(0, 60, 1, 0)
+        button.Position = UDim2.new(1, -60, 0, 0)
+        button.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
+        button.TextColor3 = Color3.new(1, 1, 1)
+        button.Font = Enum.Font.Gotham
+        button.TextSize = 14
+        button.Text = options[1]
+        button.Parent = rowFrame
+
+        local currentIndex = 1
+        button.MouseButton1Click:Connect(function()
+            currentIndex = currentIndex % #options + 1
+            local newOption = options[currentIndex]
+            button.Text = newOption
+            label.Text = labelText .. ": " .. newOption
+            cycleCallback(newOption)
+        end)
+    end
+
+    local function createSliderRow(name, labelText, order, minVal, maxVal, defaultVal, callback)
+        local sliderFrame = Instance.new("Frame")
+        sliderFram
