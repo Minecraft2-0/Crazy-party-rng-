@@ -23,6 +23,7 @@ end
 local Config = {
     MAX_RANGE         = 20,    -- Range for target detection
     COOLDOWN          = 0.2,   -- Time between attacks
+    TRACK_LERP_SPEED  = 0.1,   -- Camera tracking lerp speed
     DEBUG_MODE        = false,
     TargetingMode     = "distance", -- "distance" or "health"
 }
@@ -32,6 +33,7 @@ local ESPConfig = {
 }
 local State = {
     Enabled         = false,
+    TrackEnabled    = false,
     Weapon          = "Unarmed",
     HumanoidRootPart= nil,
     LastAttack      = 0,
@@ -127,6 +129,21 @@ if LocalPlayer.Character then
 end
 table.insert(Connections, LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
 table.insert(Connections, RunService.Heartbeat:Connect(processDamage))
+
+---------------------
+-- Camera Tracking
+---------------------
+local function trackTarget()
+    if not State.TrackEnabled or not State.HumanoidRootPart then return end
+    local targets = getSortedTargets()
+    if #targets > 0 then
+        local nearest = targets[1]
+        local camPos = Camera.CFrame.Position
+        local desiredCFrame = CFrame.new(camPos, nearest.part.Position)
+        Camera.CFrame = Camera.CFrame:Lerp(desiredCFrame, Config.TRACK_LERP_SPEED)
+    end
+end
+table.insert(Connections, RunService.RenderStepped:Connect(trackTarget))
 
 --------------------------------------------------------------------------------
 -- BOUNDING BOX ESP (2D lines + text + HP bar)
@@ -523,18 +540,23 @@ function UI.createMainGUI()
         end)
     end
 
-    createToggleRow("KillAuraToggle", "Kill Aura", 1, function(setState)
+    createToggleRow("CamTrack", "Cam Track", 1, function(setState)
+        State.TrackEnabled = not State.TrackEnabled
+        setState(State.TrackEnabled)
+    end)
+
+    createToggleRow("KillAuraToggle", "Kill Aura", 2, function(setState)
         State.Enabled = not State.Enabled
         setState(State.Enabled)
         if not State.Enabled then State.LastAttack = 0 end
     end)
 
-    createToggleRow("ESPToggle", "ESP", 2, function(setState)
+    createToggleRow("ESPToggle", "ESP", 3, function(setState)
         ESPConfig.Enabled = not ESPConfig.Enabled
         setState(ESPConfig.Enabled)
     end)
 
-    createCycleRow("TargetModeCycle", "Target Mode", 3, {"distance", "health"}, function(newMode)
+    createCycleRow("TargetModeCycle", "Target Mode", 4, {"distance", "health"}, function(newMode)
         Config.TargetingMode = newMode
     end)
 
@@ -543,7 +565,7 @@ function UI.createMainGUI()
     sliderContainer.Name = "DistanceSlider"
     sliderContainer.Size = UDim2.new(1, 0, 0, 40)
     sliderContainer.BackgroundTransparency = 1
-    sliderContainer.LayoutOrder = 4
+    sliderContainer.LayoutOrder = 5
     sliderContainer.Parent = mainFrame
 
     local sliderLabel = Instance.new("TextLabel")
@@ -568,25 +590,4 @@ function UI.createMainGUI()
     local sliderFill = Instance.new("Frame")
     sliderFill.Name = "Fill"
     sliderFill.Size = UDim2.new(ESPConfig.MaxDistance / 1000, 0, 1, 0)
-    sliderFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-    sliderFill.BorderSizePixel = 0
-    sliderFill.Parent = sliderBg
-
-    local sliderButton = Instance.new("TextButton")
-    sliderButton.Name = "Button"
-    sliderButton.Size = UDim2.new(1, 0, 1, 0)
-    sliderButton.BackgroundTransparency = 1
-    sliderButton.Text = ""
-    sliderButton.Parent = sliderBg
-
-    local function updateSlider(input)
-        local pos = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
-        sliderFill.Size = UDim2.new(pos, 0, 1, 0)
-        local val = math.floor(pos * 900 + 100) -- range 100 to 1000
-        ESPConfig.MaxDistance = val
-        sliderLabel.Text = "Distance: " .. val
-    end
-
-    local sliding = false
-    sliderButton.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputTy
+    sliderFill.BackgroundColor3 = Color3.fromRGB
