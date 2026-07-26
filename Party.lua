@@ -1,3 +1,12 @@
+--[[ 
+   Crazy Party RPG V3.7.0
+   ==========================================================
+   New Features:
+   - Advanced bounding box ESP (box + HP bar + name/distance).
+   - Targeting mode by distance or health.
+   - Cleanup routine and UI toggles.
+]]--
+
 -- Services
 local Players         = game:GetService("Players")
 local RunService      = game:GetService("RunService")
@@ -10,9 +19,9 @@ local Camera          = Workspace.CurrentCamera
 local LocalPlayer     = Players.LocalPlayer
 local PlayerGui       = LocalPlayer:WaitForChild("PlayerGui")
 
--- Global cleanup check
+-- Global cleanup check (ensuring a single instance)
 if _G.KillAuraCleanup then
-    pcall(_G.KillAuraCleanup)
+    _G.KillAuraCleanup()
 end
 local existingGUI = PlayerGui:FindFirstChild("KillAuraGUI")
 if existingGUI then
@@ -21,61 +30,45 @@ end
 
 -- Config and State
 local Config = {
-    MAX_RANGE         = 20,
-    COOLDOWN          = 0.2,
+    MAX_RANGE         = 20,    -- Range for target detection
+    COOLDOWN          = 0.2,   -- Time between attacks
+    TRACK_LERP_SPEED  = 0.1,   -- Camera tracking lerp speed
     DEBUG_MODE        = false,
     TargetingMode     = "distance", -- "distance" or "health"
 }
 local ESPConfig = {
-    Enabled     = false,
-    MaxDistance = 500,
+    Enabled     = false,       -- Toggle for ESP
+    MaxDistance = 500,         -- Default max distance for ESP (slider range 100–1000)
 }
-local FlyConfig = {
-    Enabled  = false,
-    Speed    = 1,
-    MinSpeed = 1,
-    MaxSpeed = 10,
-}
-
 local State = {
     Enabled         = false,
+    TrackEnabled    = false,
     Weapon          = "Unarmed",
     HumanoidRootPart= nil,
     LastAttack      = 0,
     DebugLog        = {},
 }
 
-local FlyState = {
-    Flying = false,
-    BodyGyro = nil,
-    BodyVelocity = nil,
-    RenderConnection = nil,
-}
-
 local DamageEvent = ReplicatedStorage:WaitForChild("GameContents"):WaitForChild("Remotes"):WaitForChild("DamageEvent")
-local Connections = {}
+local Connections = {}  -- Holds all event connections
 
-_G.KillAuraCleanup = function()
-    for _, conn in ipairs(Connections) do
-        if conn then conn:Disconnect() end
+-- Debug logger (if enabled)
+local function debugLog(msg)
+    if Config.DEBUG_MODE then
+        print("[KillAura DEBUG]: " .. msg)
+        table.insert(State.DebugLog, msg)
     end
-    if FlyState.RenderConnection then FlyState.RenderConnection:Disconnect() end
-    if FlyState.BodyGyro then FlyState.BodyGyro:Destroy() end
-    if FlyState.BodyVelocity then FlyState.BodyVelocity:Destroy() end
 end
 
 ------------------------------------------
--- Target Acquisition & Damage
+-- Target Acquisition & Damage Processing
 ------------------------------------------
 local function getSortedTargets()
     local targets = {}
     if not State.HumanoidRootPart then return targets end
     local playerPos = State.HumanoidRootPart.Position
 
-    local mobsFolder = Workspace:FindFirstChild("Mobs")
-    if not mobsFolder then return targets end
-
-    for _, mob in ipairs(mobsFolder:GetChildren()) do
+    for _, mob in ipairs(Workspace.Mobs:GetChildren()) do
         local targetPart = mob:FindFirstChild("HumanoidRootPart")
                         or mob:FindFirstChild("Head")
                         or mob:FindFirstChild("Torso")
@@ -101,6 +94,7 @@ local function getSortedTargets()
         table.sort(targets, function(a, b) return a.distance < b.distance end)
     end
 
+    debugLog("Found " .. #targets .. " valid targets using " .. Config.TargetingMode .. " mode.")
     return targets
 end
 
@@ -114,16 +108,22 @@ local function processDamage()
         local nearest = targets[1]
         DamageEvent:FireServer(nearest.part, State.Weapon)
         State.LastAttack = now
+        debugLog("Attacked target: " .. nearest.mob.Name)
     end
 end
 
+-- Update the currently equipped weapon
 local function updateWeapon(character)
     local tool = character:FindFirstChildOfClass("Tool")
     State.Weapon = tool and tool.Name or "Unarmed"
+    debugLog("Updated weapon: " .. State.Weapon)
 end
 
+-- Character handling: sets up HRP reference and weapon updates
 local function onCharacterAdded(character)
     State.HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    debugLog("Character added; HRP acquired.")
+    
     character.ChildAdded:Connect(function(child)
         if child:IsA("Tool") then updateWeapon(character) end
     end)
@@ -139,125 +139,78 @@ end
 table.insert(Connections, LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
 table.insert(Connections, RunService.Heartbeat:Connect(processDamage))
 
-------------------------------------------
--- Fly Functionality
-------------------------------------------
-local function toggleFly(enable)
-    FlyConfig.Enabled = enable
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-
-    if not hum or not root then return end
-
-    if enable then
-        FlyState.Flying = true
-
-        hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Flying, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Landed, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Running, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
-        hum:ChangeState(Enum.HumanoidStateType.Swimming)
-
-        hum.PlatformStand = true
-
-        FlyState.BodyGyro = Instance.new("BodyGyro")
-        FlyState.BodyGyro.P = 9e4
-        FlyState.BodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
-        FlyState.BodyGyro.cframe = root.CFrame
-        FlyState.BodyGyro.Parent = root
-
-        FlyState.BodyVelocity = Instance.new("BodyVelocity")
-        FlyState.BodyVelocity.velocity = Vector3.new(0, 0.1, 0)
-        FlyState.BodyVelocity.maxForce = Vector3.new(9e9, 9e9, 9e9)
-        FlyState.BodyVelocity.Parent = root
-
-        FlyState.RenderConnection = RunService.RenderStepped:Connect(function()
-            if not FlyState.Flying or not root or not hum then return end
-            
-            local moveDir = hum.MoveDirection
-            local baseSpeed = 40 * FlyConfig.Speed
-            
-            FlyState.BodyGyro.cframe = Camera.CFrame
-            
-            if moveDir.Magnitude > 0 then
-                FlyState.BodyVelocity.velocity = Camera.CFrame:VectorToWorldSpace(
-                    CFrame.new(Vector3.zero, Camera.CFrame.LookVector):VectorToWorldSpace(moveDir)
-                ) * baseSpeed
-            else
-                FlyState.BodyVelocity.velocity = Vector3.new(0, 0, 0)
-            end
-        end)
-    else
-        FlyState.Flying = false
-        if FlyState.RenderConnection then FlyState.RenderConnection:Disconnect() end
-        if FlyState.BodyGyro then FlyState.BodyGyro:Destroy() end
-        if FlyState.BodyVelocity then FlyState.BodyVelocity:Destroy() end
-
-        hum.PlatformStand = false
-        hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Flying, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Landed, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Running, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, true)
-        hum:ChangeState(Enum.HumanoidStateType.Running)
+---------------------
+-- Camera Tracking
+---------------------
+local function trackTarget()
+    if not State.TrackEnabled or not State.HumanoidRootPart then return end
+    local targets = getSortedTargets()
+    if #targets > 0 then
+        local nearest = targets[1]
+        local camPos = Camera.CFrame.Position
+        local desiredCFrame = CFrame.new(camPos, nearest.part.Position)
+        Camera.CFrame = Camera.CFrame:Lerp(desiredCFrame, Config.TRACK_LERP_SPEED)
     end
 end
+table.insert(Connections, RunService.RenderStepped:Connect(trackTarget))
 
 --------------------------------------------------------------------------------
--- ESP SYSTEM
+-- BOUNDING BOX ESP (2D lines + text + HP bar)
 --------------------------------------------------------------------------------
-local MobESPBoxes = {}
 
+-- We'll store all the "drawn" objects in a table so we can remove them later
+local MobESPBoxes = {}  -- [mob] = { lines, text, etc. }
+
+-- Utility: Projects a 3D point to 2D screen space, returning Vector2 (or nil if off-screen)
 local function worldToViewport(pos)
     local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
-    if onScreen then return Vector2.new(screenPos.X, screenPos.Y) end
+    if onScreen then
+        return Vector2.new(screenPos.X, screenPos.Y)
+    end
     return nil
 end
 
+-- Utility: get the corners of a model's bounding box (min & max corners). 
+-- We'll gather corners from the Model's GetBoundingBox or from the HumanoidRootPart bounding region.
 local function getModelCorners(model)
-    local cframe, size
-    if model.PrimaryPart then
-        cframe, size = model:GetBoundingBox()
-    else
+    if not model.PrimaryPart then
+        -- fallback: if no primary part, we’ll pick HumanoidRootPart or skip
         local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head")
         if not root then return {} end
-        cframe, size = root.CFrame, root.Size * 1.25
-    end
-    
-    local half = size / 2
-    local corners = {}
-    for x = -1, 1, 2 do
-        for y = -1, 1, 2 do
-            for z = -1, 1, 2 do
-                local offset = Vector3.new(half.X * x, half.Y * y, half.Z * z)
-                table.insert(corners, (cframe * CFrame.new(offset)).Position)
+        local size = root.Size * 1.25
+        local cframe = root.CFrame
+        local half = size / 2
+        local corners = {}
+        for x = -1, 1, 2 do
+            for y = -1, 1, 2 do
+                for z = -1, 1, 2 do
+                    local offset = Vector3.new(half.X * x, half.Y * y, half.Z * z)
+                    table.insert(corners, (cframe * CFrame.new(offset)).Position)
+                end
             end
         end
+        return corners
+    else
+        local cframe, size = model:GetBoundingBox()
+        local half = size / 2
+        local corners = {}
+        for x = -1, 1, 2 do
+            for y = -1, 1, 2 do
+                for z = -1, 1, 2 do
+                    local offset = Vector3.new(half.X * x, half.Y * y, half.Z * z)
+                    table.insert(corners, (cframe * CFrame.new(offset)).Position)
+                end
+            end
+        end
+        return corners
     end
-    return corners
 end
 
+-- Create a bounding box object for a mob
 local function createBox(mob)
     local boxData = {}
+
+    -- 4 lines for the rectangle
     boxData.OutlineTop    = Drawing.new("Line")
     boxData.OutlineBottom = Drawing.new("Line")
     boxData.OutlineLeft   = Drawing.new("Line")
@@ -270,16 +223,18 @@ local function createBox(mob)
         line.Visible = false
     end
 
+    -- HP bar (we’ll draw it as a separate vertical line or rectangle)
     boxData.HPBar = Drawing.new("Line")
     boxData.HPBar.Thickness = 3
     boxData.HPBar.Color = Color3.fromRGB(0, 255, 0)
     boxData.HPBar.Transparency = 1
     boxData.HPBar.Visible = false
 
+    -- Text label for name + distance
     boxData.Label = Drawing.new("Text")
     boxData.Label.Center = true
     boxData.Label.Outline = true
-    boxData.Label.Font = 2
+    boxData.Label.Font = 2  -- 0=UI,1=System,2=Plex,3=Monospace
     boxData.Label.Size = 13
     boxData.Label.Color = Color3.fromRGB(255, 255, 255)
     boxData.Label.Text = ""
@@ -288,14 +243,18 @@ local function createBox(mob)
     MobESPBoxes[mob] = boxData
 end
 
+-- Remove bounding box objects for a mob
 local function removeBox(mob)
     local boxData = MobESPBoxes[mob]
     if boxData then
-        for _, obj in pairs(boxData) do obj:Remove() end
+        for _, obj in pairs(boxData) do
+            obj:Remove() -- remove the Drawing object
+        end
         MobESPBoxes[mob] = nil
     end
 end
 
+-- Update bounding box for a mob
 local function updateBox(mob, dist)
     local boxData = MobESPBoxes[mob]
     if not boxData then
@@ -306,6 +265,7 @@ local function updateBox(mob, dist)
     local hrp = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Head")
     local humanoid = mob:FindFirstChildOfClass("Humanoid")
     if not hrp or not humanoid then
+        -- Not a valid mob, remove if needed
         removeBox(mob)
         return
     end
@@ -316,10 +276,11 @@ local function updateBox(mob, dist)
         return
     end
 
+    -- Project corners to 2D, find minX,minY and maxX,maxY
     local minX, minY = math.huge, math.huge
     local maxX, maxY = -math.huge, -math.huge
-    local onScreen = false
 
+    local onScreen = false
     for _, corner in ipairs(corners) do
         local screenPos = worldToViewport(corner)
         if screenPos then
@@ -332,13 +293,27 @@ local function updateBox(mob, dist)
         end
     end
 
-    if not onScreen or (maxX - minX) < 2 or (maxY - minY) < 2 then
-        for _, obj in pairs(boxData) do obj.Visible = false end
+    -- If none of the corners are on-screen, hide the box
+    if not onScreen then
+        for _, obj in pairs(boxData) do
+            obj.Visible = false
+        end
         return
     end
 
+    -- Box corners in screen space
+    local boxWidth = maxX - minX
     local boxHeight = maxY - minY
 
+    -- Make sure we have a minimum box size
+    if boxWidth < 2 or boxHeight < 2 then
+        for _, obj in pairs(boxData) do
+            obj.Visible = false
+        end
+        return
+    end
+
+    -- Position the lines
     boxData.OutlineTop.Visible = true
     boxData.OutlineTop.From = Vector2.new(minX, minY)
     boxData.OutlineTop.To   = Vector2.new(maxX, minY)
@@ -355,45 +330,74 @@ local function updateBox(mob, dist)
     boxData.OutlineRight.From = Vector2.new(maxX, minY)
     boxData.OutlineRight.To   = Vector2.new(maxX, maxY)
 
+    -- HP bar on the left side
     local hpPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
     local barHeight = boxHeight * hpPercent
     boxData.HPBar.Visible = true
-    boxData.HPBar.From = Vector2.new(minX - 4, maxY)
-    boxData.HPBar.To   = Vector2.new(minX - 4, maxY - barHeight)
+    boxData.HPBar.From = Vector2.new(minX - 4, maxY)     -- bottom
+    boxData.HPBar.To   = Vector2.new(minX - 4, maxY - barHeight) -- top
+    boxData.HPBar.Color = Color3.fromRGB(0, 255, 0)
 
+    -- Label for name + distance, placed above the top
     boxData.Label.Visible = true
     boxData.Label.Text = string.format("%s  %.0fm", mob.Name, dist)
     boxData.Label.Position = Vector2.new((minX + maxX)/2, minY - 16)
 end
 
-table.insert(Connections, RunService.RenderStepped:Connect(function()
-    if not ESPConfig.Enabled or not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        for mob in pairs(MobESPBoxes) do removeBox(mob) end
+-- Heartbeat update for bounding boxes
+local function updateBoundingBoxes()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        -- Hide all boxes if local player not ready
+        for mob, boxData in pairs(MobESPBoxes) do
+            for _, obj in pairs(boxData) do
+                obj.Visible = false
+            end
+        end
         return
     end
 
     local playerPos = LocalPlayer.Character.HumanoidRootPart.Position
-    local validMobs = {}
-    local mobsFolder = Workspace:FindFirstChild("Mobs")
 
-    if mobsFolder then
-        for _, mob in ipairs(mobsFolder:GetChildren()) do
-            local hrp = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Head") or mob:FindFirstChild("Torso")
-            if hrp then
-                local dist = (playerPos - hrp.Position).Magnitude
-                if dist <= ESPConfig.MaxDistance then validMobs[mob] = dist end
+    -- First, gather valid mobs
+    local validMobs = {}
+    for _, mob in ipairs(Workspace.Mobs:GetChildren()) do
+        local hrp = mob:FindFirstChild("HumanoidRootPart")
+                    or mob:FindFirstChild("Head")
+                    or mob:FindFirstChild("Torso")
+        if hrp then
+            local dist = (playerPos - hrp.Position).Magnitude
+            if ESPConfig.Enabled and dist <= ESPConfig.MaxDistance then
+                validMobs[mob] = dist
             end
         end
     end
 
-    for mob, dist in pairs(validMobs) do updateBox(mob, dist) end
-    for mob in pairs(MobESPBoxes) do
-        if not validMobs[mob] then removeBox(mob) end
+    -- Update or create boxes for valid mobs
+    for mob, dist in pairs(validMobs) do
+        updateBox(mob, dist)
+    end
+
+    -- Remove or hide boxes for any that are not valid
+    for mob, _ in pairs(MobESPBoxes) do
+        if not validMobs[mob] then
+            removeBox(mob)
+        end
+    end
+end
+
+table.insert(Connections, RunService.RenderStepped:Connect(function()
+    if ESPConfig.Enabled then
+        updateBoundingBoxes()
+    else
+        -- If ESP is off, hide or remove all boxes
+        for mob, _ in pairs(MobESPBoxes) do
+            removeBox(mob)
+        end
     end
 end))
 
 ---------------------
--- UI CREATION
+-- UI Creation
 ---------------------
 local UI = {}
 
@@ -437,9 +441,9 @@ function UI.createMainGUI()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 240, 0, 270)
-    mainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    mainFrame.Size = UDim2.new(0, 220, 0, 240)
+    mainFrame.Position = UDim2.new(0.4, 0, 0.3, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
@@ -469,10 +473,12 @@ function UI.createMainGUI()
     title.TextColor3 = Color3.new(1, 1, 1)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
+    title.AnchorPoint = Vector2.new(0.5, 0)
+    title.Position = UDim2.new(0.5, 0, 0, 0)
     title.Parent = mainFrame
 
     local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 6)
+    layout.Padding = UDim.new(0, 4)
     layout.FillDirection = Enum.FillDirection.Vertical
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = mainFrame
@@ -507,15 +513,18 @@ function UI.createMainGUI()
         button.Text = "OFF"
         button.Parent = rowFrame
 
-        button.MouseButton1Click:Connect(function()
-            local isNowOn = toggleCallback()
-            if isNowOn then
-                TweenService:Create(button, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(0, 180, 0) }):Play()
+        local function setState(isOn)
+            if isOn then
+                TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(0, 180, 0) }):Play()
                 button.Text = "ON"
             else
-                TweenService:Create(button, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(120, 0, 0) }):Play()
+                TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(120, 0, 0) }):Play()
                 button.Text = "OFF"
             end
+        end
+
+        button.MouseButton1Click:Connect(function()
+            toggleCallback(setState)
         end)
     end
 
@@ -559,6 +568,16 @@ function UI.createMainGUI()
         end)
     end
 
-    local function createSliderRow(name, labelText, order, minVal, maxVal, defaultVal, callback)
-        local sliderFrame = Instance.new("Frame")
-        sliderFram
+    createToggleRow("KillAuraToggle", "Kill Aura", 2, function(setState)
+        State.Enabled = not State.Enabled
+        setState(State.Enabled)
+        if not State.Enabled then State.LastAttack = 0 end
+    end)
+
+    createToggleRow("ESPToggle", "ESP", 3, function(setState)
+        ESPConfig.Enabled = not ESPConfig.Enabled
+        setState(ESPConfig.Enabled)
+    end)
+end
+
+UI.createMainGUI()
