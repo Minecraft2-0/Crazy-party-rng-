@@ -1,197 +1,3 @@
---[[ 
-   Crazy Party RPG V3.7.0
-   ==========================================================
-   New Features:
-   - Advanced bounding box ESP (box + HP bar + name/distance).
-   - Targeting mode by distance or health.
-   - Cleanup routine and UI toggles.
-]]--
-
--- Services
-local Players         = game:GetService("Players")
-local RunService      = game:GetService("RunService")
-local TweenService    = game:GetService("TweenService")
-local UserInputService= game:GetService("UserInputService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace       = game:GetService("Workspace")
-local Camera          = Workspace.CurrentCamera
-
-local LocalPlayer     = Players.LocalPlayer
-local PlayerGui       = LocalPlayer:WaitForChild("PlayerGui")
-
--- Global cleanup check (ensuring a single instance)
-if _G.KillAuraCleanup then
-    _G.KillAuraCleanup()
-end
-local existingGUI = PlayerGui:FindFirstChild("KillAuraGUI")
-if existingGUI then
-    existingGUI:Destroy()
-end
-
--- Config and State
-local Config = {
-    MAX_RANGE         = 20,    -- Range for target detection
-    COOLDOWN          = 0.2,   -- Time between attacks
-    TRACK_LERP_SPEED  = 0.1,   -- Camera tracking lerp speed
-    DEBUG_MODE        = false,
-    TargetingMode     = "distance", -- "distance" or "health"
-}
-local ESPConfig = {
-    Enabled     = false,       -- Toggle for ESP
-    MaxDistance = 500,         -- Default max distance for ESP (slider range 100–1000)
-}
-local State = {
-    Enabled         = false,
-    TrackEnabled    = false,
-    Weapon          = "Unarmed",
-    HumanoidRootPart= nil,
-    LastAttack      = 0,
-    DebugLog        = {},
-}
-
-local DamageEvent = ReplicatedStorage:WaitForChild("GameContents"):WaitForChild("Remotes"):WaitForChild("DamageEvent")
-local Connections = {}  -- Holds all event connections
-
--- Debug logger (if enabled)
-local function debugLog(msg)
-    if Config.DEBUG_MODE then
-        print("[KillAura DEBUG]: " .. msg)
-        table.insert(State.DebugLog, msg)
-    end
-end
-
-------------------------------------------
--- Target Acquisition & Damage Processing
-------------------------------------------
-local function getSortedTargets()
-    local targets = {}
-    if not State.HumanoidRootPart then return targets end
-    local playerPos = State.HumanoidRootPart.Position
-
-    for _, mob in ipairs(Workspace.Mobs:GetChildren()) do
-        local targetPart = mob:FindFirstChild("HumanoidRootPart")
-                        or mob:FindFirstChild("Head")
-                        or mob:FindFirstChild("Torso")
-        if targetPart then
-            local distance = (playerPos - targetPart.Position).Magnitude
-            if distance <= Config.MAX_RANGE then
-                table.insert(targets, { mob = mob, part = targetPart, distance = distance })
-            end
-        end
-    end
-
-    if Config.TargetingMode == "health" then
-        table.sort(targets, function(a, b)
-            local humanoidA = a.mob:FindFirstChildOfClass("Humanoid")
-            local humanoidB = b.mob:FindFirstChildOfClass("Humanoid")
-            if humanoidA and humanoidB then
-                return humanoidA.Health < humanoidB.Health
-            else
-                return a.distance < b.distance
-            end
-        end)
-    else
-        table.sort(targets, function(a, b) return a.distance < b.distance end)
-    end
-
-    debugLog("Found " .. #targets .. " valid targets using " .. Config.TargetingMode .. " mode.")
-    return targets
-end
-
-local function processDamage()
-    if not State.Enabled or not State.HumanoidRootPart then return end
-    local now = os.clock()
-    if now - State.LastAttack < Config.COOLDOWN then return end
-
-    local targets = getSortedTargets()
-    if #targets > 0 then
-        local nearest = targets[1]
-        DamageEvent:FireServer(nearest.part, State.Weapon)
-        State.LastAttack = now
-        debugLog("Attacked target: " .. nearest.mob.Name)
-    end
-end
-
--- Update the currently equipped weapon
-local function updateWeapon(character)
-    local tool = character:FindFirstChildOfClass("Tool")
-    State.Weapon = tool and tool.Name or "Unarmed"
-    debugLog("Updated weapon: " .. State.Weapon)
-end
-
--- Character handling: sets up HRP reference and weapon updates
-local function onCharacterAdded(character)
-    State.HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    debugLog("Character added; HRP acquired.")
-    
-    character.ChildAdded:Connect(function(child)
-        if child:IsA("Tool") then updateWeapon(character) end
-    end)
-    character.ChildRemoved:Connect(function(child)
-        if child:IsA("Tool") then updateWeapon(character) end
-    end)
-    updateWeapon(character)
-end
-
-if LocalPlayer.Character then
-    task.spawn(onCharacterAdded, LocalPlayer.Character)
-end
-table.insert(Connections, LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
-table.insert(Connections, RunService.Heartbeat:Connect(processDamage))
-
----------------------
--- Camera Tracking
----------------------
-local function trackTarget()
-    if not State.TrackEnabled or not State.HumanoidRootPart then return end
-    local targets = getSortedTargets()
-    if #targets > 0 then
-        local nearest = targets[1]
-        local camPos = Camera.CFrame.Position
-        local desiredCFrame = CFrame.new(camPos, nearest.part.Position)
-        Camera.CFrame = Camera.CFrame:Lerp(desiredCFrame, Config.TRACK_LERP_SPEED)
-    end
-end
-table.insert(Connections, RunService.RenderStepped:Connect(trackTarget))
-
---------------------------------------------------------------------------------
--- BOUNDING BOX ESP (2D lines + text + HP bar)
---------------------------------------------------------------------------------
-
--- We'll store all the "drawn" objects in a table so we can remove them later
-local MobESPBoxes = {}  -- [mob] = { lines, text, etc. }
-
--- Utility: Projects a 3D point to 2D screen space, returning Vector2 (or nil if off-screen)
-local function worldToViewport(pos)
-    local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
-    if onScreen then
-        return Vector2.new(screenPos.X, screenPos.Y)
-    end
-    return nil
-end
-
--- Utility: get the corners of a model's bounding box (min & max corners). 
--- We'll gather corners from the Model's GetBoundingBox or from the HumanoidRootPart bounding region.
-local function getModelCorners(model)
-    if not model.PrimaryPart then
-        -- fallback: if no primary part, we’ll pick HumanoidRootPart or skip
-        local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head")
-        if not root then return {} end
-        local size = root.Size * 1.25
-        local cframe = root.CFrame
-        local half = size / 2
-        local corners = {}
-        for x = -1, 1, 2 do
-            for y = -1, 1, 2 do
-                for z = -1, 1, 2 do
-                    local offset = Vector3.new(half.X * x, half.Y * y, half.Z * z)
-                    table.insert(corners, (cframe * CFrame.new(offset)).Position)
-                end
-            end
-        end
-        return corners
-    else
-        local cframe, size = model:GetBoundingBox()
         local half = size / 2
         local corners = {}
         for x = -1, 1, 2 do
@@ -580,4 +386,194 @@ function UI.createMainGUI()
     end)
 
     createToggleRow("ESPToggle", "ESP", 3, function(setState)
-        ESPConfig.Enabled = not ESPConfig
+        ESPConfig.Enabled = not ESPConfig.Enabled
+        setState(ESPConfig.Enabled)
+        -- If turned off, remove all boxes immediately
+        if not ESPConfig.Enabled then
+            for mob, _ in pairs(MobESPBoxes) do
+                removeBox(mob)
+            end
+        end
+    end)
+
+    createCycleRow("TargetMode", "Target Mode", 4, {"distance", "health"}, function(newOption)
+        Config.TargetingMode = newOption
+    end)
+
+    local distanceLabel = Instance.new("TextLabel")
+    distanceLabel.Name = "DistanceLabel"
+    distanceLabel.Size = UDim2.new(1, 0, 0, 20)
+    distanceLabel.BackgroundTransparency = 1
+    distanceLabel.Text = "Distance: " .. ESPConfig.MaxDistance
+    distanceLabel.TextColor3 = Color3.new(1, 1, 1)
+    distanceLabel.Font = Enum.Font.Gotham
+    distanceLabel.TextSize = 14
+    distanceLabel.TextXAlignment = Enum.TextXAlignment.Left
+    distanceLabel.LayoutOrder = 5
+    distanceLabel.Parent = mainFrame
+
+    local sliderRow = Instance.new("Frame")
+    sliderRow.Name = "SliderRow"
+    sliderRow.Size = UDim2.new(1, 0, 0, 10)
+    sliderRow.BackgroundTransparency = 1
+    sliderRow.LayoutOrder = 6
+    sliderRow.Parent = mainFrame
+
+    local sliderBG = Instance.new("Frame")
+    sliderBG.Name = "SliderBG"
+    sliderBG.Size = UDim2.new(1, 0, 1, 0)
+    sliderBG.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    sliderBG.BorderSizePixel = 0
+    sliderBG.Parent = sliderRow
+
+    local sliderFill = Instance.new("Frame")
+    sliderFill.Name = "SliderFill"
+    sliderFill.Size = UDim2.new((ESPConfig.MaxDistance - 100) / 900, 0, 1, 0)
+    sliderFill.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
+    sliderFill.BorderSizePixel = 0
+    sliderFill.Parent = sliderBG
+
+    local sliderKnob = Instance.new("TextButton")
+    sliderKnob.Name = "SliderKnob"
+    sliderKnob.Size = UDim2.new(0, 12, 1, 0)
+    sliderKnob.Position = UDim2.new((ESPConfig.MaxDistance - 100) / 900, -6, 0, 0)
+    sliderKnob.BackgroundColor3 = Color3.new(1, 1, 1)
+    sliderKnob.BorderSizePixel = 0
+    sliderKnob.Text = ""
+    sliderKnob.Parent = sliderBG
+
+    local draggingSlider = false
+    local function updateSlider(mouseX)
+        local absPos = sliderBG.AbsolutePosition.X
+        local relX = math.clamp(mouseX - absPos, 0, sliderBG.AbsoluteSize.X)
+        local pct = relX / sliderBG.AbsoluteSize.X
+        ESPConfig.MaxDistance = math.floor(100 + pct * 900)
+        sliderFill.Size = UDim2.new(pct, 0, 1, 0)
+        sliderKnob.Position = UDim2.new(pct, -6, 0, 0)
+        distanceLabel.Text = "Distance: " .. ESPConfig.MaxDistance
+    end
+
+    sliderKnob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingSlider = true
+        end
+    end)
+    sliderKnob.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingSlider = false
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input.Position.X)
+        end
+    end)
+
+    return screenGui
+end
+
+local mainGui = UI.createMainGUI()
+
+local function showNotification(screenGui)
+    local notifFrame = Instance.new("Frame")
+    notifFrame.Name = "NotificationFrame"
+    notifFrame.Size = UDim2.new(0, 300, 0, 70)
+    notifFrame.Position = UDim2.new(1, -10, 0, 10)
+    notifFrame.AnchorPoint = Vector2.new(1, 0)
+    notifFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    notifFrame.BorderSizePixel = 0
+    notifFrame.ZIndex = 10
+    notifFrame.Parent = screenGui
+
+    local notifCorner = Instance.new("UICorner")
+    notifCorner.CornerRadius = UDim.new(0, 8)
+    notifCorner.Parent = notifFrame
+
+    local mainLabel = Instance.new("TextLabel")
+    mainLabel.Name = "NotificationLabel"
+    mainLabel.Size = UDim2.new(1, -10, 0.6, 0)
+    mainLabel.Position = UDim2.new(0, 5, 0, 0)
+    mainLabel.BackgroundTransparency = 1
+    mainLabel.Text = "Executed Successfully..."
+    mainLabel.Font = Enum.Font.GothamBold
+    mainLabel.TextSize = 18
+    mainLabel.TextColor3 = Color3.new(1, 1, 1)
+    mainLabel.ZIndex = 11
+    mainLabel.Parent = notifFrame
+
+    local closingLabel = Instance.new("TextLabel")
+    closingLabel.Name = "ClosingLabel"
+    closingLabel.Size = UDim2.new(1, -10, 0.4, 0)
+    closingLabel.Position = UDim2.new(0, 5, 0.6, 0)
+    closingLabel.BackgroundTransparency = 1
+    closingLabel.Text = "Closing in 5 Seconds"
+    closingLabel.Font = Enum.Font.Gotham
+    closingLabel.TextSize = 16
+    closingLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    closingLabel.ZIndex = 11
+    closingLabel.Parent = notifFrame
+
+    notifFrame.Size = UDim2.new(0, 0, 0, 0)
+    local tweenIn = TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = UDim2.new(0, 300, 0, 70) })
+    tweenIn:Play()
+    tweenIn.Completed:Wait()
+
+    task.wait(5)
+
+    local tweenOut = TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Size = UDim2.new(0, 0, 0, 0) })
+    tweenOut:Play()
+    tweenOut.Completed:Wait()
+    notifFrame:Destroy()
+end
+
+showNotification(mainGui)
+
+-------------------------------------
+-- Debug & Quick Toggle Functionality
+-------------------------------------
+local function dumpState()
+    print("--------- KillAura State Dump ---------")
+    print("KillAura Enabled: " .. tostring(State.Enabled))
+    print("Camera Track Enabled: " .. tostring(State.TrackEnabled))
+    print("Weapon: " .. State.Weapon)
+    if State.HumanoidRootPart then
+        print("HRP Position: " .. tostring(State.HumanoidRootPart.Position))
+    else
+        print("HRP: nil")
+    end
+    print("Last Attack Time: " .. State.LastAttack)
+    print("ESP Enabled: " .. tostring(ESPConfig.Enabled))
+    print("ESP Max Distance: " .. ESPConfig.MaxDistance)
+    print("Targeting Mode: " .. Config.TargetingMode)
+    print("Debug Log:")
+    for i, log in ipairs(State.DebugLog) do
+        print(i, log)
+    end
+    print("---------------------------------------")
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed then
+        if input.KeyCode == Enum.KeyCode.V then
+            dumpState()
+        end
+        if input.KeyCode == Enum.KeyCode.X then
+            State.Enabled = not State.Enabled
+            local toggleRow = mainGui.MainFrame:FindFirstChild("KillAuraToggle")
+            if toggleRow then
+                local button = toggleRow:FindFirstChild("KillAuraToggleButton")
+                if button then
+                    if State.Enabled then
+                        TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(0, 180, 0) }):Play()
+                        button.Text = "ON"
+                    else
+                        TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(120, 0, 0) }):Play()
+                        button.Text = "OFF"
+                    end
+                end
+            end
+        end
+    end
+end)
+
+---------------------
