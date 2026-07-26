@@ -390,7 +390,7 @@ function UI.createMainGUI()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 220, 0, 210)
+    mainFrame.Size = UDim2.new(0, 220, 0, 240)
     mainFrame.Position = UDim2.new(0.4, 0, 0.3, 0)
     mainFrame.BackgroundColor3 = Color3.fromRGB(20, 10, 35) -- Темно-фиолетовый фон
     mainFrame.BorderSizePixel = 0
@@ -483,6 +483,46 @@ function UI.createMainGUI()
         end)
     end
 
+    local function createCycleRow(name, labelText, order, options, cycleCallback)
+        local rowFrame = Instance.new("Frame")
+        rowFrame.Name = name
+        rowFrame.Size = UDim2.new(1, 0, 0, 25)
+        rowFrame.BackgroundTransparency = 1
+        rowFrame.LayoutOrder = order
+        rowFrame.Parent = mainFrame
+
+        local label = Instance.new("TextLabel")
+        label.Name = name.."Label"
+        label.Size = UDim2.new(1, -70, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = labelText .. ": " .. options[1]
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = rowFrame
+
+        local button = Instance.new("TextButton")
+        button.Name = name.."Button"
+        button.Size = UDim2.new(0, 60, 1, 0)
+        button.Position = UDim2.new(1, -60, 0, 0)
+        button.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
+        button.TextColor3 = Color3.new(1, 1, 1)
+        button.Font = Enum.Font.Gotham
+        button.TextSize = 14
+        button.Text = options[1]
+        button.Parent = rowFrame
+
+        local currentIndex = 1
+        button.MouseButton1Click:Connect(function()
+            currentIndex = currentIndex % #options + 1
+            local newOption = options[currentIndex]
+            button.Text = newOption
+            label.Text = labelText .. ": " .. newOption
+            cycleCallback(newOption)
+        end)
+    end
+
     createToggleRow("KillAuraToggle", "Kill Aura", 1, function(setState)
         State.Enabled = not State.Enabled
         setState(State.Enabled)
@@ -493,6 +533,60 @@ function UI.createMainGUI()
         ESPConfig.Enabled = not ESPConfig.Enabled
         setState(ESPConfig.Enabled)
     end)
-end
 
-UI.createMainGUI()
+    createCycleRow("TargetModeCycle", "Target Mode", 3, {"distance", "health"}, function(newMode)
+        Config.TargetingMode = newMode
+    end)
+
+    -- Distance Slider Container
+    local sliderContainer = Instance.new("Frame")
+    sliderContainer.Name = "DistanceSlider"
+    sliderContainer.Size = UDim2.new(1, 0, 0, 40)
+    sliderContainer.BackgroundTransparency = 1
+    sliderContainer.LayoutOrder = 4
+    sliderContainer.Parent = mainFrame
+
+    local sliderLabel = Instance.new("TextLabel")
+    sliderLabel.Name = "Label"
+    sliderLabel.Size = UDim2.new(1, 0, 0, 18)
+    sliderLabel.BackgroundTransparency = 1
+    sliderLabel.Text = "Distance: " .. ESPConfig.MaxDistance
+    sliderLabel.TextColor3 = Color3.new(1, 1, 1)
+    sliderLabel.Font = Enum.Font.Gotham
+    sliderLabel.TextSize = 14
+    sliderLabel.TextXAlignment = Enum.TextXAlignment.Left
+    sliderLabel.Parent = sliderContainer
+
+    local sliderBg = Instance.new("Frame")
+    sliderBg.Name = "Bg"
+    sliderBg.Size = UDim2.new(1, 0, 0, 6)
+    sliderBg.Position = UDim2.new(0, 0, 0, 24)
+    sliderBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    sliderBg.BorderSizePixel = 0
+    sliderBg.Parent = sliderContainer
+
+    local sliderFill = Instance.new("Frame")
+    sliderFill.Name = "Fill"
+    sliderFill.Size = UDim2.new(ESPConfig.MaxDistance / 1000, 0, 1, 0)
+    sliderFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+    sliderFill.BorderSizePixel = 0
+    sliderFill.Parent = sliderBg
+
+    local sliderButton = Instance.new("TextButton")
+    sliderButton.Name = "Button"
+    sliderButton.Size = UDim2.new(1, 0, 1, 0)
+    sliderButton.BackgroundTransparency = 1
+    sliderButton.Text = ""
+    sliderButton.Parent = sliderBg
+
+    local function updateSlider(input)
+        local pos = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
+        sliderFill.Size = UDim2.new(pos, 0, 1, 0)
+        local val = math.floor(pos * 900 + 100) -- range 100 to 1000
+        ESPConfig.MaxDistance = val
+        sliderLabel.Text = "Distance: " .. val
+    end
+
+    local sliding = false
+    sliderButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputTy
