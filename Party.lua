@@ -1,3 +1,12 @@
+--[[ 
+   Crazy Party RPG
+   ==========================================================
+   New Features:
+   - Advanced bounding box ESP (box + HP bar + name/distance).
+   - Targeting mode by distance or health.
+   - Cleanup routine and UI toggles.
+]]--
+
 -- Services
 local Players         = game:GetService("Players")
 local RunService      = game:GetService("RunService")
@@ -409,7 +418,8 @@ function UI.createMainGUI()
     mainFrame.Name = "MainFrame"
     mainFrame.Size = UDim2.new(0, 220, 0, 240)
     mainFrame.Position = UDim2.new(0.4, 0, 0.3, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 10, 35) -- Темно-фиолетовый фон
+    -- Изменён фон на тёмно-фиолетовый
+    mainFrame.BackgroundColor3 = Color3.fromRGB(35, 15, 50)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
@@ -419,10 +429,13 @@ function UI.createMainGUI()
     stroke.Parent = mainFrame
 
     -- RGB эффект для обводки
-    table.insert(Connections, RunService.RenderStepped:Connect(function()
-        local hue = (tick() % 5) / 5
-        stroke.Color = Color3.fromHSV(hue, 1, 1)
-    end))
+    task.spawn(function()
+        while stroke.Parent do
+            local hue = tick() % 5 / 5
+            stroke.Color = Color3.fromHSV(hue, 1, 1)
+            task.wait(0.03)
+        end
+    end)
 
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 6)
@@ -556,38 +569,17 @@ function UI.createMainGUI()
         setState(ESPConfig.Enabled)
     end)
 
-    createCycleRow("TargetModeCycle", "Target Mode", 4, {"distance", "health"}, function(newMode)
-        Config.TargetingMode = newMode
+    createCycleRow("TargetMode", "Target", 4, {"distance", "health"}, function(newOption)
+        Config.TargetingMode = newOption
     end)
 
-    -- Distance Slider Container
-    local sliderContainer = Instance.new("Frame")
-    sliderContainer.Name = "DistanceSlider"
-    sliderContainer.Size = UDim2.new(1, 0, 0, 40)
-    sliderContainer.BackgroundTransparency = 1
-    sliderContainer.LayoutOrder = 5
-    sliderContainer.Parent = mainFrame
+    createToggleRow("DebugToggle", "Debug", 5, function(setState)
+        Config.DEBUG_MODE = not Config.DEBUG_MODE
+        setState(Config.DEBUG_MODE)
+    end)
 
-    local sliderLabel = Instance.new("TextLabel")
-    sliderLabel.Name = "Label"
-    sliderLabel.Size = UDim2.new(1, 0, 0, 18)
-    sliderLabel.BackgroundTransparency = 1
-    sliderLabel.Text = "Distance: " .. ESPConfig.MaxDistance
-    sliderLabel.TextColor3 = Color3.new(1, 1, 1)
-    sliderLabel.Font = Enum.Font.Gotham
-    sliderLabel.TextSize = 14
-    sliderLabel.TextXAlignment = Enum.TextXAlignment.Left
-    sliderLabel.Parent = sliderContainer
+    return screenGui
+end
 
-    local sliderBg = Instance.new("Frame")
-    sliderBg.Name = "Bg"
-    sliderBg.Size = UDim2.new(1, 0, 0, 6)
-    sliderBg.Position = UDim2.new(0, 0, 0, 24)
-    sliderBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    sliderBg.BorderSizePixel = 0
-    sliderBg.Parent = sliderContainer
+UI.createMainGUI()
 
-    local sliderFill = Instance.new("Frame")
-    sliderFill.Name = "Fill"
-    sliderFill.Size = UDim2.new(ESPConfig.MaxDistance / 1000, 0, 1, 0)
-    sliderFill.BackgroundColor3 = Color3.fromRGB
