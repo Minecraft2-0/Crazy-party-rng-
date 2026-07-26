@@ -1,4 +1,6 @@
-
+--[[ 
+   Crazy Party RPG V3.7.0 (Modified: RGB, Dark Purple, Fly Added)
+]]--
 
 -- Services
 local Players         = game:GetService("Players")
@@ -27,11 +29,11 @@ local Config = {
     COOLDOWN          = 0.2,   -- Time between attacks
     TRACK_LERP_SPEED  = 0.1,   -- Camera tracking lerp speed
     DEBUG_MODE        = false,
-    TargetingMode     = "distance",
+    TargetingMode     = "distance", -- "distance" or "health"
 }
 local ESPConfig = {
-    Enabled     = false,
-    MaxDistance = 500,
+    Enabled     = false,       -- Toggle for ESP
+    MaxDistance = 500,         -- Default max distance for ESP
 }
 local State = {
     Enabled         = false,
@@ -42,13 +44,13 @@ local State = {
     DebugLog        = {},
 }
 
--- Fly variables
+-- Fly Variables
 local nowe = false
 local speeds = 1
 local tpwalking = false
 
 local DamageEvent = ReplicatedStorage:WaitForChild("GameContents"):WaitForChild("Remotes"):WaitForChild("DamageEvent")
-local Connections = {}
+local Connections = {}  -- Holds all event connections
 
 local function debugLog(msg)
     if Config.DEBUG_MODE then
@@ -146,9 +148,9 @@ end
 table.insert(Connections, RunService.RenderStepped:Connect(trackTarget))
 
 --------------------------------------------------------------------------------
--- BOUNDING BOX ESP
+-- BOUNDING BOX ESP (оригинальный из 1 скрипта)
 --------------------------------------------------------------------------------
-local MobESPBoxes = {}
+local MobESPBoxes = {}  
 
 local function worldToViewport(pos)
     local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
@@ -305,8 +307,8 @@ local function updateBox(mob, dist)
     local hpPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
     local barHeight = boxHeight * hpPercent
     boxData.HPBar.Visible = true
-    boxData.HPBar.From = Vector2.new(minX - 4, maxY)
-    boxData.HPBar.To   = Vector2.new(minX - 4, maxY - barHeight)
+    boxData.HPBar.From = Vector2.new(minX - 4, maxY)     
+    boxData.HPBar.To   = Vector2.new(minX - 4, maxY - barHeight) 
     boxData.HPBar.Color = Color3.fromRGB(0, 255, 0)
 
     boxData.Label.Visible = true
@@ -404,18 +406,18 @@ function UI.createMainGUI()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 220, 0, 310) -- Увеличили высоту под кнопку флая и ползунок
+    mainFrame.Size = UDim2.new(0, 220, 0, 310) -- Сделали чуть выше под дополнительные кнопки
     mainFrame.Position = UDim2.new(0.4, 0, 0.3, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(35, 15, 55) -- Тёмно-фиолетовый фон
+    mainFrame.BackgroundColor3 = Color3.fromRGB(35, 15, 55) -- ТЕМНО-ФИОЛЕТОВЫЙ ФОН
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
     local stroke = Instance.new("UIStroke")
     stroke.Thickness = 2
-    stroke.Color = Color3.fromRGB(255, 0, 0)
+    stroke.Color = Color3.fromRGB(0, 255, 0)
     stroke.Parent = mainFrame
 
-    -- RGB эффект для обводки
+    -- RGB ОБВОДКА (Плавная смена цветов)
     RunService.RenderStepped:Connect(function()
         local hue = tick() % 5 / 5
         stroke.Color = Color3.fromHSV(hue, 1, 1)
@@ -513,7 +515,7 @@ function UI.createMainGUI()
         setState(ESPConfig.Enabled)
     end)
 
-    -- Ряд управления полетом (Fly Toggle)
+    -- Кнопка Флая
     createToggleRow("FlyToggle", "Fly", 4, function(setState)
         nowe = not nowe
         setState(nowe)
@@ -548,7 +550,6 @@ function UI.createMainGUI()
                 speaker.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Swimming)
             end
             
-            -- Логика движения полета
             task.spawn(function()
                 local plr = Players.LocalPlayer
                 local char = plr.Character
@@ -570,7 +571,7 @@ function UI.createMainGUI()
                 local maxspeed = 50
                 local speedVal = 0
                 
-                local uis = game:GetService("UserInputService")
+                local uis = UserInputService
                 local conn1, conn2
                 
                 conn1 = uis.InputBegan:Connect(function(input)
@@ -582,4 +583,4 @@ function UI.createMainGUI()
                 
                 conn2 = uis.InputEnded:Connect(function(input)
                     if input.KeyCode == Enum.KeyCode.W then ctrl.f = 0 end
-                  
+       
