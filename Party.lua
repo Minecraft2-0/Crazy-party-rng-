@@ -1,7 +1,3 @@
---[[ 
-   Crazy Party RPG V3.7.0 (Modified: RGB, Dark Purple, Fly Added)
-]]--
-
 -- Services
 local Players         = game:GetService("Players")
 local RunService      = game:GetService("RunService")
@@ -27,31 +23,25 @@ end
 local Config = {
     MAX_RANGE         = 20,    -- Range for target detection
     COOLDOWN          = 0.2,   -- Time between attacks
-    TRACK_LERP_SPEED  = 0.1,   -- Camera tracking lerp speed
     DEBUG_MODE        = false,
     TargetingMode     = "distance", -- "distance" or "health"
 }
 local ESPConfig = {
     Enabled     = false,       -- Toggle for ESP
-    MaxDistance = 500,         -- Default max distance for ESP
+    MaxDistance = 500,         -- Default max distance for ESP (slider range 100–1000)
 }
 local State = {
     Enabled         = false,
-    TrackEnabled    = false,
     Weapon          = "Unarmed",
     HumanoidRootPart= nil,
     LastAttack      = 0,
     DebugLog        = {},
 }
 
--- Fly Variables
-local nowe = false
-local speeds = 1
-local tpwalking = false
-
 local DamageEvent = ReplicatedStorage:WaitForChild("GameContents"):WaitForChild("Remotes"):WaitForChild("DamageEvent")
 local Connections = {}  -- Holds all event connections
 
+-- Debug logger (if enabled)
 local function debugLog(msg)
     if Config.DEBUG_MODE then
         print("[KillAura DEBUG]: " .. msg)
@@ -93,6 +83,7 @@ local function getSortedTargets()
         table.sort(targets, function(a, b) return a.distance < b.distance end)
     end
 
+    debugLog("Found " .. #targets .. " valid targets using " .. Config.TargetingMode .. " mode.")
     return targets
 end
 
@@ -106,16 +97,21 @@ local function processDamage()
         local nearest = targets[1]
         DamageEvent:FireServer(nearest.part, State.Weapon)
         State.LastAttack = now
+        debugLog("Attacked target: " .. nearest.mob.Name)
     end
 end
 
+-- Update the currently equipped weapon
 local function updateWeapon(character)
     local tool = character:FindFirstChildOfClass("Tool")
     State.Weapon = tool and tool.Name or "Unarmed"
+    debugLog("Updated weapon: " .. State.Weapon)
 end
 
+-- Character handling: sets up HRP reference and weapon updates
 local function onCharacterAdded(character)
     State.HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    debugLog("Character added; HRP acquired.")
     
     character.ChildAdded:Connect(function(child)
         if child:IsA("Tool") then updateWeapon(character) end
@@ -132,25 +128,11 @@ end
 table.insert(Connections, LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
 table.insert(Connections, RunService.Heartbeat:Connect(processDamage))
 
----------------------
--- Camera Tracking
----------------------
-local function trackTarget()
-    if not State.TrackEnabled or not State.HumanoidRootPart then return end
-    local targets = getSortedTargets()
-    if #targets > 0 then
-        local nearest = targets[1]
-        local camPos = Camera.CFrame.Position
-        local desiredCFrame = CFrame.new(camPos, nearest.part.Position)
-        Camera.CFrame = Camera.CFrame:Lerp(desiredCFrame, Config.TRACK_LERP_SPEED)
-    end
-end
-table.insert(Connections, RunService.RenderStepped:Connect(trackTarget))
+--------------------------------------------------------------------------------
+-- BOUNDING BOX ESP (2D lines + text + HP bar)
+--------------------------------------------------------------------------------
 
---------------------------------------------------------------------------------
--- BOUNDING BOX ESP (оригинальный из 1 скрипта)
---------------------------------------------------------------------------------
-local MobESPBoxes = {}  
+local MobESPBoxes = {}  -- [mob] = { lines, text, etc. }
 
 local function worldToViewport(pos)
     local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
@@ -195,6 +177,7 @@ end
 
 local function createBox(mob)
     local boxData = {}
+
     boxData.OutlineTop    = Drawing.new("Line")
     boxData.OutlineBottom = Drawing.new("Line")
     boxData.OutlineLeft   = Drawing.new("Line")
@@ -307,8 +290,8 @@ local function updateBox(mob, dist)
     local hpPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
     local barHeight = boxHeight * hpPercent
     boxData.HPBar.Visible = true
-    boxData.HPBar.From = Vector2.new(minX - 4, maxY)     
-    boxData.HPBar.To   = Vector2.new(minX - 4, maxY - barHeight) 
+    boxData.HPBar.From = Vector2.new(minX - 4, maxY)
+    boxData.HPBar.To   = Vector2.new(minX - 4, maxY - barHeight)
     boxData.HPBar.Color = Color3.fromRGB(0, 255, 0)
 
     boxData.Label.Visible = true
@@ -327,6 +310,7 @@ local function updateBoundingBoxes()
     end
 
     local playerPos = LocalPlayer.Character.HumanoidRootPart.Position
+
     local validMobs = {}
     for _, mob in ipairs(Workspace.Mobs:GetChildren()) do
         local hrp = mob:FindFirstChild("HumanoidRootPart")
@@ -406,22 +390,22 @@ function UI.createMainGUI()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 220, 0, 310) -- Сделали чуть выше под дополнительные кнопки
+    mainFrame.Size = UDim2.new(0, 220, 0, 210)
     mainFrame.Position = UDim2.new(0.4, 0, 0.3, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(35, 15, 55) -- ТЕМНО-ФИОЛЕТОВЫЙ ФОН
+    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 10, 35) -- Темно-фиолетовый фон
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
     local stroke = Instance.new("UIStroke")
     stroke.Thickness = 2
-    stroke.Color = Color3.fromRGB(0, 255, 0)
+    stroke.Color = Color3.fromRGB(255, 0, 0)
     stroke.Parent = mainFrame
 
-    -- RGB ОБВОДКА (Плавная смена цветов)
-    RunService.RenderStepped:Connect(function()
-        local hue = tick() % 5 / 5
+    -- RGB эффект для обводки
+    table.insert(Connections, RunService.RenderStepped:Connect(function()
+        local hue = (tick() % 5) / 5
         stroke.Color = Color3.fromHSV(hue, 1, 1)
-    end)
+    end))
 
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 6)
@@ -499,88 +483,16 @@ function UI.createMainGUI()
         end)
     end
 
-    createToggleRow("CamTrack", "Cam Track", 1, function(setState)
-        State.TrackEnabled = not State.TrackEnabled
-        setState(State.TrackEnabled)
-    end)
-
-    createToggleRow("KillAuraToggle", "Kill Aura", 2, function(setState)
+    createToggleRow("KillAuraToggle", "Kill Aura", 1, function(setState)
         State.Enabled = not State.Enabled
         setState(State.Enabled)
         if not State.Enabled then State.LastAttack = 0 end
     end)
 
-    createToggleRow("ESPToggle", "ESP", 3, function(setState)
+    createToggleRow("ESPToggle", "ESP", 2, function(setState)
         ESPConfig.Enabled = not ESPConfig.Enabled
         setState(ESPConfig.Enabled)
     end)
+end
 
-    -- Кнопка Флая
-    createToggleRow("FlyToggle", "Fly", 4, function(setState)
-        nowe = not nowe
-        setState(nowe)
-        
-        local speaker = Players.LocalPlayer
-        if nowe then
-            for i = 1, speeds do
-                task.spawn(function()
-                    local hb = RunService.Heartbeat	
-                    tpwalking = true
-                    local chr = speaker.Character
-                    local hum = chr and chr:FindFirstChildWhichIsA("Humanoid")
-                    while tpwalking and hb:Wait() and chr and hum and hum.Parent do
-                        if hum.MoveDirection.Magnitude > 0 then
-                            chr:TranslateBy(hum.MoveDirection)
-                        end
-                    end
-                end)
-            end
-            if speaker.Character and speaker.Character:FindFirstChild("Animate") then
-                speaker.Character.Animate.Disabled = true
-            end
-            local Char = speaker.Character
-            local Hum = Char and (Char:FindFirstChildOfClass("Humanoid") or Char:FindFirstChildOfClass("AnimationController"))
-            if Hum then
-                for _,v in next, Hum:GetPlayingAnimationTracks() do
-                    v:AdjustSpeed(0)
-                end
-            end
-            if speaker.Character and speaker.Character:FindFirstChild("Humanoid") then
-                speaker.Character.Humanoid.PlatformStand = true
-                speaker.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Swimming)
-            end
-            
-            task.spawn(function()
-                local plr = Players.LocalPlayer
-                local char = plr.Character
-                if not char then return end
-                local rootPart = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
-                if not rootPart then return end
-                
-                local bg = Instance.new("BodyGyro", rootPart)
-                bg.P = 9e4
-                bg.maxTorque = Vector3.new(9e9, 9e9, 9e9)
-                bg.cframe = rootPart.CFrame
-                
-                local bv = Instance.new("BodyVelocity", rootPart)
-                bv.velocity = Vector3.new(0, 0.1, 0)
-                bv.maxForce = Vector3.new(9e9, 9e9, 9e9)
-                
-                local ctrl = {f = 0, b = 0, l = 0, r = 0}
-                local lastctrl = {f = 0, b = 0, l = 0, r = 0}
-                local maxspeed = 50
-                local speedVal = 0
-                
-                local uis = UserInputService
-                local conn1, conn2
-                
-                conn1 = uis.InputBegan:Connect(function(input)
-                    if input.KeyCode == Enum.KeyCode.W then ctrl.f = 1 end
-                    if input.KeyCode == Enum.KeyCode.S then ctrl.b = -1 end
-                    if input.KeyCode == Enum.KeyCode.A then ctrl.l = -1 end
-                    if input.KeyCode == Enum.KeyCode.D then ctrl.r = 1 end
-                end)
-                
-                conn2 = uis.InputEnded:Connect(function(input)
-                    if input.KeyCode == Enum.KeyCode.W then ctrl.f = 0 end
-       
+UI.createMainGUI()
