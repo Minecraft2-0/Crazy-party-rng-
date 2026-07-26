@@ -1,7 +1,11 @@
 --[[ 
-   Crazy Party RPG V3.7.0 [FIXED]
+   Crazy Party RPG V3.7.0 [FULL RESTORED]
    ==========================================================
-   Fixed syntax cutoff at the end and added safety checks for Drawing API.
+   Features:
+   - Advanced bounding box ESP (box + HP bar + name/distance).
+   - Targeting mode by distance or health.
+   - ESP Distance Slider (100 - 1000).
+   - Full Cleanup routine & UI toggles.
 ]]--
 
 -- Services
@@ -16,22 +20,26 @@ local Camera          = Workspace.CurrentCamera
 local LocalPlayer     = Players.LocalPlayer
 local PlayerGui       = LocalPlayer:WaitForChild("PlayerGui")
 
--- Global cleanup check
+-- Global cleanup check (ensuring a single instance)
 if _G.KillAuraCleanup then
     _G.KillAuraCleanup()
+end
+local existingGUI = PlayerGui:FindFirstChild("KillAuraGUI")
+if existingGUI then
+    existingGUI:Destroy()
 end
 
 -- Config and State
 local Config = {
-    MAX_RANGE         = 20,
-    COOLDOWN          = 0.2,
-    TRACK_LERP_SPEED  = 0.1,
+    MAX_RANGE         = 20,    -- Range for target detection
+    COOLDOWN          = 0.2,   -- Time between attacks
+    TRACK_LERP_SPEED  = 0.1,   -- Camera tracking lerp speed
     DEBUG_MODE        = false,
-    TargetingMode     = "distance",
+    TargetingMode     = "distance", -- "distance" or "health"
 }
 local ESPConfig = {
-    Enabled     = false,
-    MaxDistance = 500,
+    Enabled     = false,       -- Toggle for ESP
+    MaxDistance = 500,         -- Default max distance for ESP (slider range 100–1000)
 }
 local State = {
     Enabled         = false,
@@ -43,22 +51,22 @@ local State = {
 }
 
 local DamageEvent = ReplicatedStorage:WaitForChild("GameContents"):WaitForChild("Remotes"):WaitForChild("DamageEvent")
-local Connections = {}
+local Connections = {}  -- Holds all event connections
 
-local function debugLog(msg)
-    if Config.DEBUG_MODE then
-        print("[KillAura DEBUG]: " .. msg)
-        table.insert(State.DebugLog, msg)
-    end
-end
-
--- Cleanup Function
 _G.KillAuraCleanup = function()
     for _, conn in ipairs(Connections) do
         if conn then conn:Disconnect() end
     end
     local gui = PlayerGui:FindFirstChild("KillAuraGUI")
     if gui then gui:Destroy() end
+end
+
+-- Debug logger (if enabled)
+local function debugLog(msg)
+    if Config.DEBUG_MODE then
+        print("[KillAura DEBUG]: " .. msg)
+        table.insert(State.DebugLog, msg)
+    end
 end
 
 ------------------------------------------
@@ -70,16 +78,16 @@ local function getSortedTargets()
     local playerPos = State.HumanoidRootPart.Position
 
     local mobsFolder = Workspace:FindFirstChild("Mobs")
-    if not mobsFolder then return targets end
-
-    for _, mob in ipairs(mobsFolder:GetChildren()) do
-        local targetPart = mob:FindFirstChild("HumanoidRootPart")
-                        or mob:FindFirstChild("Head")
-                        or mob:FindFirstChild("Torso")
-        if targetPart then
-            local distance = (playerPos - targetPart.Position).Magnitude
-            if distance <= Config.MAX_RANGE then
-                table.insert(targets, { mob = mob, part = targetPart, distance = distance })
+    if mobsFolder then
+        for _, mob in ipairs(mobsFolder:GetChildren()) do
+            local targetPart = mob:FindFirstChild("HumanoidRootPart")
+                            or mob:FindFirstChild("Head")
+                            or mob:FindFirstChild("Torso")
+            if targetPart then
+                local distance = (playerPos - targetPart.Position).Magnitude
+                if distance <= Config.MAX_RANGE then
+                    table.insert(targets, { mob = mob, part = targetPart, distance = distance })
+                end
             end
         end
     end
@@ -114,11 +122,13 @@ local function processDamage()
     end
 end
 
+-- Update the currently equipped weapon
 local function updateWeapon(character)
     local tool = character:FindFirstChildOfClass("Tool")
     State.Weapon = tool and tool.Name or "Unarmed"
 end
 
+-- Character handling
 local function onCharacterAdded(character)
     State.HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
     
@@ -153,7 +163,7 @@ end
 table.insert(Connections, RunService.RenderStepped:Connect(trackTarget))
 
 --------------------------------------------------------------------------------
--- BOUNDING BOX ESP
+-- BOUNDING BOX ESP (2D lines + text + HP bar)
 --------------------------------------------------------------------------------
 local MobESPBoxes = {}
 
@@ -378,7 +388,7 @@ function UI.createMainGUI()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 220, 0, 180)
+    mainFrame.Size = UDim2.new(0, 220, 0, 240)
     mainFrame.Position = UDim2.new(0.4, 0, 0.3, 0)
     mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
     mainFrame.BorderSizePixel = 0
@@ -394,9 +404,8 @@ function UI.createMainGUI()
     corner.Parent = mainFrame
 
     local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 6)
+    layout.Padding = UDim.new(0, 4)
     layout.FillDirection = Enum.FillDirection.Vertical
-    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = mainFrame
 
@@ -411,12 +420,13 @@ function UI.createMainGUI()
 
     local title = Instance.new("TextLabel")
     title.Name = "Title"
-    title.Size = UDim2.new(1, 0, 0, 20)
+    title.Size = UDim2.new(1, 0, 0, 25)
     title.BackgroundTransparency = 1
     title.Text = "Crazy Party RPG"
     title.TextColor3 = Color3.new(1, 1, 1)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
+    title.LayoutOrder = 0
     title.Parent = mainFrame
 
     local function createToggleRow(name, labelText, order, toggleCallback)
@@ -447,34 +457,125 @@ function UI.createMainGUI()
         button.Text = "OFF"
         button.Parent = rowFrame
 
+        local function setState(isOn)
+            if isOn then
+                TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(0, 180, 0) }):Play()
+                button.Text = "ON"
+            else
+                TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(120, 0, 0) }):Play()
+                button.Text = "OFF"
+            end
+        end
+
         button.MouseButton1Click:Connect(function()
-            toggleCallback(function(isOn)
-                if isOn then
-                    TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(0, 180, 0) }):Play()
-                    button.Text = "ON"
-                else
-                    TweenService:Create(button, TweenInfo.new(0.3), { BackgroundColor3 = Color3.fromRGB(120, 0, 0) }):Play()
-                    button.Text = "OFF"
-                end
-            end)
+            toggleCallback(setState)
         end)
     end
 
+    local function createCycleRow(name, labelText, order, options, cycleCallback)
+        local rowFrame = Instance.new("Frame")
+        rowFrame.Name = name
+        rowFrame.Size = UDim2.new(1, 0, 0, 25)
+        rowFrame.BackgroundTransparency = 1
+        rowFrame.LayoutOrder = order
+        rowFrame.Parent = mainFrame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -70, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = labelText .. ":"
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = rowFrame
+
+        local button = Instance.new("TextButton")
+        button.Size = UDim2.new(0, 60, 1, 0)
+        button.Position = UDim2.new(1, -60, 0, 0)
+        button.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
+        button.TextColor3 = Color3.new(1, 1, 1)
+        button.Font = Enum.Font.Gotham
+        button.TextSize = 12
+        button.Text = options[1]
+        button.Parent = rowFrame
+
+        local currentIndex = 1
+        button.MouseButton1Click:Connect(function()
+            currentIndex = currentIndex % #options + 1
+            local newOption = options[currentIndex]
+            button.Text = newOption
+            cycleCallback(newOption)
+        end)
+    end
+
+    local function createSliderRow(name, order, minVal, maxVal, defaultVal, callback)
+        local container = Instance.new("Frame")
+        container.Name = name
+        container.Size = UDim2.new(1, 0, 0, 40)
+        container.BackgroundTransparency = 1
+        container.LayoutOrder = order
+        container.Parent = mainFrame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 0, 18)
+        label.BackgroundTransparency = 1
+        label.Text = "Distance: " .. tostring(defaultVal)
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = container
+
+        local sliderBG = Instance.new("Frame")
+        sliderBG.Size = UDim2.new(1, 0, 0, 10)
+        sliderBG.Position = UDim2.new(0, 0, 0, 22)
+        sliderBG.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        sliderBG.BorderSizePixel = 0
+        sliderBG.Parent = container
+
+        local sliderFill = Instance.new("Frame")
+        local startScale = (defaultVal - minVal) / (maxVal - minVal)
+        sliderFill.Size = UDim2.new(startScale, 0, 1, 0)
+        sliderFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+        sliderFill.BorderSizePixel = 0
+        sliderFill.Parent = sliderBG
+
+        local isDragging = false
+        local function updateSlider(input)
+            local pos = input.Position.X - sliderBG.AbsolutePosition.X
+            local scale = math.clamp(pos / sliderBG.AbsoluteSize.X, 0, 1)
+            sliderFill.Size = UDim2.new(scale, 0, 1, 0)
+            local val = math.floor(minVal + (maxVal - minVal) * scale)
+            label.Text = "Distance: " .. tostring(val)
+            callback(val)
+        end
+
+        sliderBG.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDragging = true
+                updateSlider(input)
+            end
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDragging = false
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                updateSlider(input)
+            end
+        end)
+    end
+
+    -- Toggles
     createToggleRow("CamTrack", "Cam Track", 1, function(setState)
         State.TrackEnabled = not State.TrackEnabled
         setState(State.TrackEnabled)
     end)
 
     createToggleRow("KillAuraToggle", "Kill Aura", 2, function(setState)
-        State.Enabled = not State.Enabled
-        setState(State.Enabled)
-        if not State.Enabled then State.LastAttack = 0 end
-    end)
-
-    createToggleRow("ESPToggle", "ESP", 3, function(setState)
-        ESPConfig.Enabled = not ESPConfig.Enabled
-        setState(ESPConfig.Enabled)
-    end)
-end
-
-UI.createMainGUI()
+        State
